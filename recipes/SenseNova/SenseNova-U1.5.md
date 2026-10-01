@@ -93,6 +93,94 @@ python examples/online_serving/sensenova_u1/openai_chat_client.py \
 
 `-s` takes the base URL; the client appends `/v1` itself.
 
+##### Mixed-traffic readiness warmup
+
+For a deployment alternating image generation and text/vision chat, opt in to a
+bounded warmup profile for the shapes it serves most often:
+
+```bash
+TORCH_LOGS=recompiles VLLM_LOGGING_LEVEL=DEBUG \
+vllm serve sensenova/SenseNova-U1.5-8B-MoT --omni --port 8091 \
+  --additional-config \
+  '{"sensenova_mixed_warmup":{"resolutions":[[1024,1024],[1536,1536]],"text_to_text":true,"image_to_text":true}}'
+```
+
+The existing generic 512x512 image-conditioned dummy runs first. The extra
+profile then runs one-token text-to-text and image-to-text requests and one-step,
+think-off text-to-image requests at the listed resolutions. The text warmup
+also exercises the existing paged AR decode runner, so its first graph capture
+happens before readiness. This profile does not implement or change the decode
+graph capture machinery in #7666. Think-on image generation can reuse that
+decode graph; it is not separately prewarmed by this profile. Shapes not listed
+continue through the normal request path.
+
+The profile is off by default because each additional shape increases startup
+time and may increase peak or reserved GPU memory. `resolutions` accepts at most
+three distinct `[width,height]` pairs, each divisible by the model's patch/merge
+factor and no larger than 4096² pixels. `text_to_text` and `image_to_text` are
+optional booleans. For image shapes, `cfg_scale` defaults to 4.0 on the
+base model and 1.0 when the distilled LoRA is fused at load time; it can also
+be set explicitly in the warmup object. Set only the paths and resolutions
+your workload actually uses. A failed explicitly requested warmup fails startup
+so the server does not
+silently claim to be ready without the selected shapes.
+
+To measure an alternating sequence, start the server with its output redirected
+to a log and run:
+
+```bash
+python benchmarks/diffusion/sensenova_mixed.py \
+  --base-url http://127.0.0.1:8091 --rounds 2 --steps 2 \
+  --server-log /path/to/server.log --output /path/to/mixed-result.json
+```
+
+Use `--case` repeatedly to select the exact sequence; supported forms are
+`t2i:WxH`, `t2i-think:WxH`, `t2t`, and `i2t`. The report includes per-request
+latency, P50/P100, and serving-time recompile/graph-capture log counts. Keep
+server revision, GPU, compile-cache state, and sequence identical in the
+baseline and warmup runs; record startup time and GPU memory separately. For
+the distilled LoRA profile, pass `--steps 8 --cfg-scale 1.0` to the benchmark.
+
+In one cold-cache H20-3e BF16 comparison (vLLM 0.30.0, torch 2.13.0+cu132,
+model revision `9feeeab8`, vLLM-Omni base `a038b3817`, TP=1), each server
+used its own CUDA, Triton, Inductor, and vLLM cache directory. The alternating
+sequence was `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`, repeated twice;
+image requests used two denoising steps and CFG 4.0, and text requests used
+`max_tokens=2`. These short requests isolate first-hit overhead rather than
+represent production image quality or throughput.
+
+| Metric | Default warmup | Mixed warmup |
+| --- | ---: | ---: |
+| Startup to `/health` | 26.0 s | 90.7 s |
+| GPU process memory at readiness (approx.) | 34,432 MiB | 35,609 MiB |
+| Mixed-request P50 | 1.377 s | 0.660 s |
+| Mixed-request P100 | 59.316 s | 2.224 s |
+| First text-to-text request | 59.316 s | 0.076 s |
+| Decode graphs captured after readiness | 1 | 0 |
+| `torch.compile` recompilations after readiness | 0 | 0 |
+
+The first text request dominated the baseline tail and captured a paged decode
+graph. With mixed warmup, that capture occurred during readiness; the text
+warmup itself took 63.0 s in the isolated-cache run. Regional compilation was
+skipped for this model, so these measurements do not establish a
+`torch.compile` speedup. Memory values came from `nvidia-smi` in separate
+ready-to-serve runs, not a peak-memory measurement. A separate think-on 1024x1024 request after mixed
+warmup completed in 2.709 s with no serving-time graph capture or recompile;
+an uncovered 1280x1280 text-to-image request completed in 1.765 s.
+
+With the 8-step distilled LoRA revision `f33b8fe` fused, the same sequence
+used eight denoising steps and CFG 1.0. The warmup profile automatically chose
+CFG 1.0 for its image requests. Separate cold-cache runs on the same H20-3e
+gave:
+
+| Metric | Default warmup | Mixed warmup |
+| --- | ---: | ---: |
+| Startup to `/health` | 36.1 s | 95.7 s |
+| Mixed-request P50 | 2.105 s | 1.010 s |
+| Mixed-request P100 | 59.846 s | 4.029 s |
+| Decode graphs captured after readiness | 1 | 0 |
+| `torch.compile` recompilations after readiness | 0 | 0 |
+
 ##### Online FP8 quantization
 
 `--quantization fp8` quantizes only eligible attention and MLP linears in the
