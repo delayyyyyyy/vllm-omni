@@ -1,70 +1,76 @@
-# SenseNova-U1.5 mixed warmup: H20 run evidence
+# SenseNova-U1.5 mixed warmup: committed H20 run evidence
 
-These are the original benchmark JSON reports from the H20-3e runs described in
-[the SenseNova recipe](../../../../recipes/SenseNova/SenseNova-U1.5.md).
-The benchmark sent eight serial requests per run: two repetitions of
+These reports were recorded with the benchmark script at commit
+`ed5c7a3c8f2daeecac24c8d786b128cfaa0a6cbf` on one NVIDIA H20-3e
+(GPU 0, BF16, TP=1), using model snapshot
+`9feeeab8a2792514d109cd34589342a2cc1d4ab2`.
+The default-warmup servers ran baseline commit
+`a038b38179e9c788d3af6a8e73f94652afb247e4`; the mixed-warmup
+servers ran committed warmup code `ed5c7a3c8f2daeecac24c8d786b128cfaa0a6cbf`.
+All four servers used separate empty CUDA, Triton, Inductor, and vLLM
+cache directories. They ran sequentially on the same GPU.
+
+Each report contains eight serial requests: two repetitions of
 `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`.
-The original reports predate the `image_seed` report field added during review;
-the benchmark payload used the fixed image seed 42 in all four runs.
-The two warmup reports were measured on different uncommitted working-tree
-states based on `a038b3817`, before the implementation commit `37ac759`.
-Their log excerpts show the same warmup call at source lines 1379 and 1382,
-respectively; neither run is a benchmark of this PR's committed head.
-The numbers are exploratory first-hit measurements, not final-head regression
-results. The two baseline reports used the unmodified `a038b3817` checkout.
+Image requests used seed 42; the distilled LoRA runs used snapshot
+`f33b8fe0216e6f10e5aed58ebbfdd05f02826732`.
 
-| Run | Original report | Start (Unix s) | First `/health` (Unix s) | Startup |
-| --- | --- | ---: | ---: | ---: |
-| base BF16, default warmup | [base2.json](base2.json) | 1790845158.859599352 | 1790845184.847380877 | 26.0 s |
-| base BF16, mixed warmup | [warm.json](warm.json) | 1790845274.806712151 | 1790845365.469507933 | 90.7 s |
-| distilled LoRA, default warmup | [base-distill.json](base-distill.json) | 1790845784.823287725 | 1790845820.939787865 | 36.1 s |
-| distilled LoRA, mixed warmup | [warm-distill.json](warm-distill.json) | 1790845938.858382225 | 1790846034.511888742 | 95.7 s |
+| Run | Original report | Start (Unix s) | First `/health` (Unix s) | Startup | GPU process memory at readiness |
+| --- | --- | ---: | ---: | ---: | ---: |
+| base BF16, default warmup | [base2.json](base2.json) | 1790960890.655597925 | 1790960917.201091528 | 26.5 s | 34432 MiB (pid 1719655) |
+| base BF16, mixed warmup | [warm.json](warm.json) | 1790960989.715407610 | 1790961078.307873011 | 88.6 s | 35600 MiB (pid 1721308) |
+| distilled LoRA, default warmup | [base-distill.json](base-distill.json) | 1790961091.699863911 | 1790961127.247184753 | 35.5 s | 34432 MiB (pid 1722904) |
+| distilled LoRA, mixed warmup | [warm-distill.json](warm-distill.json) | 1790961204.148144960 | 1790961296.750504494 | 92.6 s | 35600 MiB (pid 1724628) |
 
-The startup durations come from the saved server-start and first successful
-`/health` timestamps. The process GPU memory values in the recipe were
-observed with `nvidia-smi` at readiness, but a raw `nvidia-smi` snapshot
-was not saved; those values are approximate author observations.
+The readiness memory column is the raw result of
+`nvidia-smi -i 0 --query-compute-apps=pid,used_gpu_memory --format=csv,noheader`
+at first successful `/health`; it is process allocation, not peak memory.
+The reports count graph captures and recompiles after the benchmark starts.
+These are single runs of eight serial requests, not throughput or confidence
+interval measurements. Regional `torch.compile` was skipped for this model.
 
 ## Server log excerpts
 
-These lines come from the corresponding original server logs. They show whether
-the paged decode graph was captured before or after readiness. The JSON reports
-count captures and recompiles only after the benchmark starts.
+The lines below are copied from each run's server log. In default-warmup
+runs, paged decode graph capture follows readiness; in mixed-warmup runs
+it precedes readiness.
 
 ### base BF16, default warmup
 
 ```text
-(DiffusionWorker pid=490342) INFO:     Application startup complete.
-(DiffusionWorker pid=490342) DEBUG 10-01 17:00:54 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
+(DiffusionWorker pid=1719655) INFO:     Application startup complete.
+(DiffusionWorker pid=1719655) DEBUG 10-03 01:09:37 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
 ```
 
 ### base BF16, mixed warmup
 
 ```text
-(DiffusionWorker pid=494307) DEBUG 10-01 17:02:42 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
-(DiffusionWorker pid=494307) INFO 10-01 17:02:42 [pipeline_sensenova_u1.py:1379] SenseNova mixed warmup text_to_text took 63.02 s
-(DiffusionWorker pid=494307) INFO 10-01 17:02:42 [pipeline_sensenova_u1.py:1379] SenseNova mixed warmup image_to_text took 0.08 s
-(DiffusionWorker pid=494307) INFO 10-01 17:02:43 [pipeline_sensenova_u1.py:1379] SenseNova mixed warmup text_to_image_1024x1024 took 0.86 s
-(DiffusionWorker pid=494307) INFO 10-01 17:02:44 [pipeline_sensenova_u1.py:1379] SenseNova mixed warmup text_to_image_1536x1536 took 0.96 s
-(DiffusionWorker pid=494307) INFO:     Application startup complete.
+(DiffusionWorker pid=1721308) INFO 10-03 01:10:05 [pipeline_sensenova_u1.py:626] SenseNova mixed warmup profile armed: resolutions=[(1024, 1024), (1536, 1536)] text_to_text=True image_to_text=True
+(DiffusionWorker pid=1721308) DEBUG 10-03 01:11:15 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
+(DiffusionWorker pid=1721308) INFO 10-03 01:11:15 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_text took 58.65 s
+(DiffusionWorker pid=1721308) INFO 10-03 01:11:15 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup image_to_text took 0.06 s
+(DiffusionWorker pid=1721308) INFO 10-03 01:11:16 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_image_1024x1024 took 0.80 s
+(DiffusionWorker pid=1721308) INFO 10-03 01:11:17 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_image_1536x1536 took 1.02 s
+(DiffusionWorker pid=1721308) INFO:     Application startup complete.
 ```
 
 ### distilled LoRA, default warmup
 
 ```text
-(DiffusionWorker pid=511203) INFO:     Application startup complete.
-(DiffusionWorker pid=511203) DEBUG 10-01 17:11:31 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
+(DiffusionWorker pid=1722904) INFO:     Application startup complete.
+(DiffusionWorker pid=1722904) DEBUG 10-03 01:13:07 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
 ```
 
 ### distilled LoRA, mixed warmup
 
 ```text
-(DiffusionWorker pid=516962) DEBUG 10-01 17:13:52 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
-(DiffusionWorker pid=516962) INFO 10-01 17:13:52 [pipeline_sensenova_u1.py:1382] SenseNova mixed warmup text_to_text took 58.80 s
-(DiffusionWorker pid=516962) INFO 10-01 17:13:52 [pipeline_sensenova_u1.py:1382] SenseNova mixed warmup image_to_text took 0.07 s
-(DiffusionWorker pid=516962) INFO 10-01 17:13:52 [pipeline_sensenova_u1.py:1382] SenseNova mixed warmup text_to_image_1024x1024 took 0.67 s
-(DiffusionWorker pid=516962) INFO 10-01 17:13:53 [pipeline_sensenova_u1.py:1382] SenseNova mixed warmup text_to_image_1536x1536 took 0.61 s
-(DiffusionWorker pid=516962) INFO:     Application startup complete.
+(DiffusionWorker pid=1724628) INFO 10-03 01:13:39 [pipeline_sensenova_u1.py:626] SenseNova mixed warmup profile armed: resolutions=[(1024, 1024), (1536, 1536)] text_to_text=True image_to_text=True
+(DiffusionWorker pid=1724628) DEBUG 10-03 01:14:54 [paged_decode.py:357] Captured decode graph for bucket=512 generation=0
+(DiffusionWorker pid=1724628) INFO 10-03 01:14:54 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_text took 58.12 s
+(DiffusionWorker pid=1724628) INFO 10-03 01:14:54 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup image_to_text took 0.08 s
+(DiffusionWorker pid=1724628) INFO 10-03 01:14:54 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_image_1024x1024 took 0.68 s
+(DiffusionWorker pid=1724628) INFO 10-03 01:14:55 [pipeline_sensenova_u1.py:1394] SenseNova mixed warmup text_to_image_1536x1536 took 0.60 s
+(DiffusionWorker pid=1724628) INFO:     Application startup complete.
 ```
 
 No `Recompiling function` line appeared during any benchmark sequence.

@@ -1,9 +1,9 @@
 {
   "model": "sensenova/SenseNova-U1.5-8B-MoT",
   "model_revision": "9feeeab8a2792514d109cd34589342a2cc1d4ab2",
-  "benchmark_sha": "a038b38179e9c788d3af6a8e73f94652afb247e4",
-  "server_sha": "a038b3817+working-tree",
-  "hardware": "1x NVIDIA H20-3e 143771 MiB",
+  "benchmark_sha": "ed5c7a3c8f2daeecac24c8d786b128cfaa0a6cbf",
+  "server_sha": "ed5c7a3c8f2daeecac24c8d786b128cfaa0a6cbf",
+  "hardware": "1x NVIDIA H20-3e 143771 MiB, CUDA_VISIBLE_DEVICES=0, TP=1",
   "warmup_config": "1024+1536+t2t+i2t",
   "cases": [
     "t2i:1024x1024",
@@ -14,51 +14,52 @@
   "rounds": 2,
   "steps": 2,
   "cfg_scale": 4.0,
-  "p50_s": 0.66,
-  "p100_s": 2.224,
+  "image_seed": 42,
+  "p50_s": 0.6585,
+  "p100_s": 2.226,
   "by_case": {
     "t2i:1024x1024": {
-      "p50_s": 1.127,
-      "p100_s": 1.154
+      "p50_s": 1.1364999999999998,
+      "p100_s": 1.17
     },
     "t2t": {
-      "p50_s": 0.069,
-      "p100_s": 0.076
+      "p50_s": 0.0635,
+      "p100_s": 0.065
     },
     "i2t": {
-      "p50_s": 0.147,
-      "p100_s": 0.22
+      "p50_s": 0.158,
+      "p100_s": 0.214
     },
     "t2i:1536x1536": {
-      "p50_s": 2.2125000000000004,
-      "p100_s": 2.224
+      "p50_s": 2.225,
+      "p100_s": 2.226
     }
   },
   "requests": [
     {
       "round": 0,
       "case": "t2i:1024x1024",
-      "latency_s": 1.154
+      "latency_s": 1.17
     },
     {
       "round": 0,
       "case": "t2t",
-      "latency_s": 0.076
+      "latency_s": 0.065
     },
     {
       "round": 0,
       "case": "i2t",
-      "latency_s": 0.22
+      "latency_s": 0.214
     },
     {
       "round": 0,
       "case": "t2i:1536x1536",
-      "latency_s": 2.224
+      "latency_s": 2.226
     },
     {
       "round": 1,
       "case": "t2i:1024x1024",
-      "latency_s": 1.1
+      "latency_s": 1.103
     },
     {
       "round": 1,
@@ -68,12 +69,12 @@
     {
       "round": 1,
       "case": "i2t",
-      "latency_s": 0.074
+      "latency_s": 0.102
     },
     {
       "round": 1,
       "case": "t2i:1536x1536",
-      "latency_s": 2.201
+      "latency_s": 2.224
     }
   ],
   "serving_recompiles": 0,

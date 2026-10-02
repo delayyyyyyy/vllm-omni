@@ -145,35 +145,36 @@ baseline and warmup runs; record startup time and GPU memory separately. For
 the distilled LoRA profile, pass `--steps 8 --cfg-scale 1.0` to the benchmark.
 
 In one cold-cache H20-3e BF16 comparison (vLLM 0.30.0, torch 2.13.0+cu132,
-model revision `9feeeab8`, vLLM-Omni base `a038b3817`, TP=1), each server
-used its own CUDA, Triton, Inductor, and vLLM cache directory. The
-[original JSON reports and server-log excerpts](../../benchmarks/diffusion/evidence/sensenova_u15_mixed_h20/README.md)
-are available for review. The two warmup measurements came from different
-uncommitted working-tree states before `37ac759`; they are indicative
-first-hit results, not measurements of the final PR commit. The alternating
-sequence was `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`, repeated twice;
-image requests used two denoising steps and CFG 4.0, and text requests used
-`max_tokens=2`. These short requests isolate first-hit overhead rather than
-represent production image quality or throughput.
+model revision `9feeeab8`, TP=1), the default server ran vLLM-Omni commit
+`a038b3817` and the mixed-warmup server ran committed code `ed5c7a3c8`.
+Each server used its own CUDA, Triton, Inductor, and vLLM cache directory.
+The [JSON reports, startup timestamps, GPU process memory snapshots, and
+server-log excerpts](../../benchmarks/diffusion/evidence/sensenova_u15_mixed_h20/README.md)
+are available for review. The alternating sequence was `t2i:1024x1024`,
+`t2t`, `i2t`, `t2i:1536x1536`, repeated twice; image requests used seed 42,
+two denoising steps, and CFG 4.0, while text requests used `max_tokens=2`.
+These short requests isolate first-hit overhead rather than represent
+production image quality or throughput.
 
 | Metric | Default warmup | Mixed warmup |
 | --- | ---: | ---: |
-| Startup to `/health` | 26.0 s | 90.7 s |
-| GPU process memory at readiness (approx.) | 34,432 MiB | 35,609 MiB |
-| Mixed-request P50 | 1.377 s | 0.660 s |
-| Mixed-request P100 | 59.316 s | 2.224 s |
-| First text-to-text request | 59.316 s | 0.076 s |
+| Startup to `/health` | 26.5 s | 88.6 s |
+| GPU process memory at readiness | 34,432 MiB | 35,600 MiB |
+| Mixed-request P50 | 1.3735 s | 0.6585 s |
+| Mixed-request P100 | 58.571 s | 2.226 s |
+| First text-to-text request | 58.571 s | 0.065 s |
 | Decode graphs captured after readiness | 1 | 0 |
 | `torch.compile` recompilations after readiness | 0 | 0 |
 
 The first text request dominated the baseline tail and captured a paged decode
 graph. With mixed warmup, that capture occurred during readiness; the text
-warmup itself took 63.0 s in the isolated-cache run. Regional compilation was
-skipped for this model, so these measurements do not establish a
-`torch.compile` speedup. Memory values came from `nvidia-smi` in separate
-ready-to-serve runs, not a peak-memory measurement. A separate think-on 1024x1024 request after mixed
-warmup completed in 2.709 s with no serving-time graph capture or recompile;
-an uncovered 1280x1280 text-to-image request completed in 1.765 s.
+warmup itself took 58.65 s in the isolated-cache run. Regional compilation
+was skipped for this model, so these measurements do not establish a
+`torch.compile` speedup. Memory values are `nvidia-smi` process allocations
+at readiness, not peak-memory measurements. In an earlier development-run
+smoke test, a think-on 1024x1024 request completed in 2.709 s without a
+serving-time capture or recompile, and an uncovered 1280x1280 request
+completed in 1.765 s; those two requests were not rerun at `ed5c7a3c8`.
 
 With the 8-step distilled LoRA revision `f33b8fe` fused, the same sequence
 used eight denoising steps and CFG 1.0. The warmup profile automatically chose
@@ -182,9 +183,10 @@ gave:
 
 | Metric | Default warmup | Mixed warmup |
 | --- | ---: | ---: |
-| Startup to `/health` | 36.1 s | 95.7 s |
-| Mixed-request P50 | 2.105 s | 1.010 s |
-| Mixed-request P100 | 59.846 s | 4.029 s |
+| Startup to `/health` | 35.5 s | 92.6 s |
+| GPU process memory at readiness | 34,432 MiB | 35,600 MiB |
+| Mixed-request P50 | 2.0915 s | 1.0275 s |
+| Mixed-request P100 | 57.790 s | 4.037 s |
 | Decode graphs captured after readiness | 1 | 0 |
 | `torch.compile` recompilations after readiness | 0 | 0 |
 
