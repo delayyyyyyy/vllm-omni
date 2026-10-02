@@ -6,9 +6,12 @@ The benchmark sent eight serial requests per run: two repetitions of
 `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`.
 The original reports predate the `image_seed` report field added during review;
 the benchmark payload used the fixed image seed 42 in all four runs.
-The warmup reports say `server_sha=a038b3817+working-tree` because the
-implementation was still uncommitted during measurement; it was subsequently
-committed as `37ac759` in this PR.
+The two warmup reports were measured on different uncommitted working-tree
+states based on `a038b3817`, before the implementation commit `37ac759`.
+Their log excerpts show the same warmup call at source lines 1379 and 1382,
+respectively; neither run is a benchmark of this PR's committed head.
+The numbers are exploratory first-hit measurements, not final-head regression
+results. The two baseline reports used the unmodified `a038b3817` checkout.
 
 | Run | Original report | Start (Unix s) | First `/health` (Unix s) | Startup |
 | --- | --- | ---: | ---: | ---: |

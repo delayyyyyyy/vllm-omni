@@ -48,7 +48,7 @@ from vllm_omni.diffusion.lora.loader import (
 from vllm_omni.diffusion.model_loader.diffusers_loader import DiffusersPipelineLoader
 from vllm_omni.diffusion.models.interface import SupportsComponentDiscovery
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
-from vllm_omni.diffusion.request import OmniDiffusionRequest
+from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID, OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 from vllm_omni.quantization import resolve_component_quant_config
 from vllm_omni.transformers_utils.configs.sensenova_u1 import (
@@ -657,6 +657,10 @@ class SenseNovaU1Pipeline(
     # Helpers
     # -----------------------------------------------------------------------
 
+    def _has_fused_distilled_lora(self) -> bool:
+        """Return whether the configured LoRA is fused at model load time."""
+        return self.od_config.lora_backend == "distill" and bool(self.od_config.lora_path)
+
     def _unsupported_quant_methods_check(self, quant_config: QuantizationConfig | None) -> None:
         """Reject online FP8 combined with distilled LoRA."""
         if (
@@ -666,7 +670,7 @@ class SenseNovaU1Pipeline(
         ):
             return
 
-        if self.od_config.lora_backend == "distill" and self.od_config.lora_path:
+        if self._has_fused_distilled_lora():
             raise ValueError(
                 "SenseNova does not support online FP8 with distilled LoRA "
                 "Use BF16 without quantization for distilled LoRA, or omit the LoRA options for online FP8."
@@ -1362,7 +1366,8 @@ class SenseNovaU1Pipeline(
         This optional profile adds short text and text-to-image requests at the
         operator-selected shapes. The ordinary text request also exercises the
         existing paged decode runner; this method does not implement its graph
-        capture machinery.
+        capture machinery. Unlike _warm_ar_decode, failures are not swallowed:
+        when invoked by the engine dummy, they abort startup.
         """
         config = self._mixed_warmup
         if config is None or self._mixed_warmup_done:
@@ -1405,11 +1410,9 @@ class SenseNovaU1Pipeline(
             )
             image = Image.new("RGB", (512, 512), (127, 127, 127))
             record("image_to_text", lambda: self._forward_text(image_params, [image]))
-        od_config = getattr(self, "od_config", None)
-        fused_distill = getattr(od_config, "lora_backend", None) == "distill" and bool(
-            getattr(od_config, "lora_path", None)
+        cfg_scale = (
+            config.cfg_scale if config.cfg_scale is not None else (1.0 if self._has_fused_distilled_lora() else 4.0)
         )
-        cfg_scale = config.cfg_scale if config.cfg_scale is not None else (1.0 if fused_distill else 4.0)
         for width, height in config.resolutions:
             image_params = params(
                 {"prompt": "A red cube on a white table", "modalities": ["image"]},
@@ -1426,6 +1429,13 @@ class SenseNovaU1Pipeline(
         if callable(is_dummy_run):
             return bool(is_dummy_run())
         return OmniDiffusionRequest.is_dummy_run_request_id(getattr(req, "request_id", None))
+
+    @staticmethod
+    def _is_engine_dummy_request(req: OmniDiffusionRequest | DiffusionRequestBatch) -> bool:
+        """Exclude prefixed KV-profile requests from the mixed warmup."""
+        if isinstance(req, DiffusionRequestBatch):
+            return req.num_reqs == 1 and req.request_id == DUMMY_DIFFUSION_REQUEST_ID
+        return getattr(req, "request_id", None) == DUMMY_DIFFUSION_REQUEST_ID
 
     def _warm_ar_decode(self) -> None:
         """Run one single-token decode at startup so its compiled region is built.
@@ -1464,8 +1474,13 @@ class SenseNovaU1Pipeline(
             output = self._forward_it2i(p, input_images)
         else:
             output = self._forward_t2i(p)
-        if is_warmup and self._mixed_warmup is not None:
-            self._warm_mixed_shapes()
+        if self._mixed_warmup is not None:
+            if self._is_engine_dummy_request(req):
+                self._warm_mixed_shapes()
+            elif not is_warmup and not self._mixed_warmup_done:
+                logger.warning_once(
+                    "SenseNova mixed warmup was armed but never ran; the first requests will pay the warmup cost."
+                )
         return output
 
     def _forward_t2i(self, p) -> DiffusionOutput:

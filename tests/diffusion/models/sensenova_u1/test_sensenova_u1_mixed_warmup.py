@@ -11,6 +11,8 @@ from vllm_omni.diffusion.models.sensenova_u1.pipeline_sensenova_u1 import (
     SenseNovaU1Pipeline,
     _parse_mixed_warmup_config,
 )
+from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID
+from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu, pytest.mark.diffusion]
 
@@ -24,7 +26,8 @@ def test_mixed_warmup_covers_selected_task_and_resolution_shapes(monkeypatch):
     host._mixed_warmup_done = False
     host.patch_size = 2
     host.merge_size = 8
-    calls = []
+    host.od_config = SimpleNamespace(lora_backend=LoRABackend.PEFT, lora_path=None)
+    calls: list[tuple[object, ...]] = []
     monkeypatch.setattr(
         host,
         "_forward_text",
@@ -82,3 +85,31 @@ def test_mixed_warmup_uses_distilled_lora_cfg(monkeypatch):
     SenseNovaU1Pipeline._warm_mixed_shapes(host)
 
     assert seen == [1.0]
+
+
+def test_mixed_warmup_uses_explicit_cfg_scale(monkeypatch):
+    host = object.__new__(SenseNovaU1Pipeline)
+    host._mixed_warmup = _parse_mixed_warmup_config({"resolutions": [[1024, 1024]], "cfg_scale": 2.5}, grid_factor=16)
+    host._mixed_warmup_done = False
+    host.patch_size = 2
+    host.merge_size = 8
+    host.od_config = SimpleNamespace(lora_backend=LoRABackend.PEFT, lora_path=None)
+    seen = []
+    monkeypatch.setattr(host, "_forward_t2i", lambda params: seen.append(params.cfg_scale))
+
+    SenseNovaU1Pipeline._warm_mixed_shapes(host)
+
+    assert seen == [2.5]
+
+
+def test_mixed_warmup_uses_only_plain_engine_dummy():
+    plain = SimpleNamespace(request_id=DUMMY_DIFFUSION_REQUEST_ID)
+    kv_profile = SimpleNamespace(request_id=f"{DUMMY_DIFFUSION_REQUEST_ID}/kv-profile-0")
+    real = SimpleNamespace(request_id="real-request")
+
+    assert SenseNovaU1Pipeline._is_engine_dummy_request(plain)
+    assert SenseNovaU1Pipeline._is_engine_dummy_request(DiffusionRequestBatch([plain]))
+    assert not SenseNovaU1Pipeline._is_engine_dummy_request(kv_profile)
+    assert not SenseNovaU1Pipeline._is_engine_dummy_request(DiffusionRequestBatch([kv_profile]))
+    assert not SenseNovaU1Pipeline._is_engine_dummy_request(DiffusionRequestBatch([plain, real]))
+    assert not SenseNovaU1Pipeline._is_engine_dummy_request(real)
