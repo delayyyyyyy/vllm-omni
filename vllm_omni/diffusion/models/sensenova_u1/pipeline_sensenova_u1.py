@@ -622,6 +622,13 @@ class SenseNovaU1Pipeline(
             (getattr(od_config, "additional_config", None) or {}).get("sensenova_mixed_warmup"),
             grid_factor=patch_size * merge_size,
         )
+        if self._mixed_warmup is not None:
+            logger.info(
+                "SenseNova mixed warmup profile armed: resolutions=%s text_to_text=%s image_to_text=%s",
+                list(self._mixed_warmup.resolutions),
+                self._mixed_warmup.text_to_text,
+                self._mixed_warmup.image_to_text,
+            )
         self._mixed_warmup_done = False
 
         # Weight sources for diffusers_loader

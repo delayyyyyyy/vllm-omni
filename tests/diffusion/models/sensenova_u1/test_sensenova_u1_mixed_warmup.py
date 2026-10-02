@@ -22,18 +22,9 @@ def test_mixed_warmup_covers_selected_task_and_resolution_shapes(monkeypatch):
         grid_factor=16,
     )
     host._mixed_warmup_done = False
+    host.patch_size = 2
+    host.merge_size = 8
     calls = []
-
-    def parse(request):
-        sampling = request.sampling_params
-        return SimpleNamespace(
-            prompt=request.prompts[0]["prompt"],
-            image_size=(sampling.width, sampling.height),
-            num_steps=sampling.num_inference_steps,
-            extra_args=sampling.extra_args,
-        )
-
-    monkeypatch.setattr(host, "_parse_request", parse)
     monkeypatch.setattr(
         host,
         "_forward_text",
@@ -43,7 +34,7 @@ def test_mixed_warmup_covers_selected_task_and_resolution_shapes(monkeypatch):
         host,
         "_forward_t2i",
         lambda params: calls.append(
-            ("image", params.image_size, params.num_steps, params.extra_args["think"], params.extra_args["cfg_scale"])
+            ("image", params.image_size, params.num_steps, params.think_mode, params.cfg_scale)
         ),
     )
 
@@ -82,10 +73,11 @@ def test_mixed_warmup_uses_distilled_lora_cfg(monkeypatch):
     host = object.__new__(SenseNovaU1Pipeline)
     host._mixed_warmup = _parse_mixed_warmup_config({"resolutions": [[1024, 1024]]}, grid_factor=16)
     host._mixed_warmup_done = False
+    host.patch_size = 2
+    host.merge_size = 8
     host.od_config = SimpleNamespace(lora_backend=LoRABackend.DISTILL, lora_path="adapter")
     seen = []
-    monkeypatch.setattr(host, "_parse_request", lambda request: request.sampling_params)
-    monkeypatch.setattr(host, "_forward_t2i", lambda params: seen.append(params.extra_args["cfg_scale"]))
+    monkeypatch.setattr(host, "_forward_t2i", lambda params: seen.append(params.cfg_scale))
 
     SenseNovaU1Pipeline._warm_mixed_shapes(host)
 

@@ -5,6 +5,9 @@
 Start the server with ``TORCH_LOGS=recompiles VLLM_LOGGING_LEVEL=DEBUG`` and redirect its output to a
 file. Pass that file with ``--server-log`` to count serving-time recompiles and
 decode-graph captures alongside the per-request latency measurements.
+The OpenAI chat endpoint normalizes diffusion fields in
+``vllm_omni/entrypoints/openai/serving_chat.py`` and
+``diffusion_request_utils.py``; ``cfg_scale`` aliases ``true_cfg_scale``.
 """
 
 import argparse
@@ -21,6 +24,7 @@ import requests
 from PIL import Image
 
 DEFAULT_CASES = ("t2i:1024x1024", "t2t", "i2t", "t2i:1536x1536")
+IMAGE_SEED = 42
 _RESOLUTION = re.compile(r"^(\d+)x(\d+)$")
 
 
@@ -54,7 +58,7 @@ def _request_payload(case: str, *, steps: int, cfg_scale: float, image_uri: str)
         "modalities": ["text" if kind in {"t2t", "i2t"} else "image"],
     }
     if kind.startswith("t2i"):
-        payload.update(width=width, height=height, num_inference_steps=steps, seed=42, cfg_scale=cfg_scale)
+        payload.update(width=width, height=height, num_inference_steps=steps, seed=IMAGE_SEED, cfg_scale=cfg_scale)
         if kind == "t2i-think":
             payload["think"] = True
     else:
@@ -122,6 +126,7 @@ def main() -> None:
         "rounds": args.rounds,
         "steps": args.steps,
         "cfg_scale": args.cfg_scale,
+        "image_seed": IMAGE_SEED,
         "p50_s": statistics.median(latencies),
         "p100_s": max(latencies),
         "by_case": {

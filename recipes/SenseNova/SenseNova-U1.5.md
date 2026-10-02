@@ -143,7 +143,9 @@ the distilled LoRA profile, pass `--steps 8 --cfg-scale 1.0` to the benchmark.
 
 In one cold-cache H20-3e BF16 comparison (vLLM 0.30.0, torch 2.13.0+cu132,
 model revision `9feeeab8`, vLLM-Omni base `a038b3817`, TP=1), each server
-used its own CUDA, Triton, Inductor, and vLLM cache directory. The alternating
+used its own CUDA, Triton, Inductor, and vLLM cache directory. The
+[original JSON reports and server-log excerpts](../../benchmarks/diffusion/evidence/sensenova_u15_mixed_h20/README.md)
+are available for review. The alternating
 sequence was `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`, repeated twice;
 image requests used two denoising steps and CFG 4.0, and text requests used
 `max_tokens=2`. These short requests isolate first-hit overhead rather than
