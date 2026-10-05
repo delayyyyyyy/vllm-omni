@@ -286,6 +286,9 @@ pytest -q tests/diffusion/models/sensenova_u1/
 - The first request after startup costs about 0.7 s more than the steady state whether the paged
   path is on or off. Measured on one A800 with the inductor, triton and vLLM compile caches all
   cleared, median of three runs: 718 ms above steady with the path on, 679 ms with it off.
-- Each request captures its own graphs, and a think request captures twice because the sequence
-  grows past the 512 bucket, so the capture cost is paid per request rather than once at
-  startup.
+- With paged decode enabled, the pipeline owns the decode cache and captured graphs. The first
+  decode in a bucket captures its graph; later requests reuse it while the cache remains
+  compatible. A think request may enter a larger bucket and capture an additional graph there.
+  Dynamically served LoRA adapters disable this cross-request reuse, so their decode cache and
+  graphs are built per request. The distilled LoRA fused at load time uses the ordinary reused
+  path. If paged decode is unavailable or disabled, decoding falls back to the ordinary cache.

@@ -50,6 +50,7 @@ from vllm_omni.diffusion.models.interface import SupportsComponentDiscovery
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
 from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID, OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 from vllm_omni.quantization import resolve_component_quant_config
 from vllm_omni.transformers_utils.configs.sensenova_u1 import (
     SenseNovaU1Config,
@@ -1378,7 +1379,7 @@ class SenseNovaU1Pipeline(
         ) -> SimpleNamespace:
             request = SimpleNamespace(
                 prompts=[prompt],
-                sampling_params=SimpleNamespace(
+                sampling_params=OmniDiffusionSamplingParams(
                     width=width,
                     height=height,
                     num_inference_steps=1,
