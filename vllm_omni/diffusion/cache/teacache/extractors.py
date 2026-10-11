@@ -1229,17 +1229,17 @@ def extract_sensenova_u1_context(
     else:
         causal_mask_mapping = attention_mask
 
-    position_embeddings = (
-        module.model.rotary_emb(inputs_embeds, indexes[0].unsqueeze(0)),
-        module.model.rotary_emb_hw(inputs_embeds, indexes[1].unsqueeze(0)),
-        module.model.rotary_emb_hw(inputs_embeds, indexes[2].unsqueeze(0)),
-    )
-
     first_layer = module.model.layers[0]
     modulated_input = first_layer.input_layernorm_mot_gen(inputs_embeds)
 
     def run_transformer_blocks():
+        assert indexes is not None
         h = inputs_embeds
+        position_embeddings = (
+            module.model.rotary_emb(h, indexes[0].unsqueeze(0)),
+            module.model.rotary_emb_hw(h, indexes[1].unsqueeze(0)),
+            module.model.rotary_emb_hw(h, indexes[2].unsqueeze(0)),
+        )
         for layer in module.model.layers:
             h = layer(
                 h,
