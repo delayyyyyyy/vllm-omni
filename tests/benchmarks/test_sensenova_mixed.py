@@ -83,3 +83,59 @@ def test_invalid_image_does_not_enter_benchmark_report(monkeypatch, tmp_path):
         sensenova_mixed.main()
 
     assert not report.exists()
+
+
+def test_selected_model_is_sent_for_every_case(monkeypatch, tmp_path):
+    payloads = []
+
+    class Response:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return _response(self.content)
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def post(self, *_args, json, **_kwargs):
+            payloads.append(json)
+            content = _image_content() if json["modalities"] == ["image"] else "A red cube."
+            return Response(content)
+
+    report = tmp_path / "result.json"
+    monkeypatch.setattr(sensenova_mixed.requests, "Session", Session)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sensenova_mixed.py",
+            "--model",
+            "selected/model",
+            "--rounds",
+            "1",
+            "--case",
+            "t2t",
+            "--case",
+            "i2t",
+            "--case",
+            "t2i:32x16",
+            "--case",
+            "t2i-think:32x16",
+            "--output",
+            str(report),
+        ],
+    )
+
+    sensenova_mixed.main()
+
+    assert len(payloads) == 4
+    assert all(payload["model"] == "selected/model" for payload in payloads)
+    assert '"model": "selected/model"' in report.read_text()

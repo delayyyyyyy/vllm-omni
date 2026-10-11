@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from cache_dit import ForwardPattern
 from PIL import Image
 from torch import nn
 
+from vllm_omni.diffusion.cache.cachedit import CacheDiTAdapterConfig, CacheDiTBackend
 from vllm_omni.diffusion.cache.teacache.backend import TeaCacheBackend
 from vllm_omni.diffusion.cache.teacache.hook import TeaCacheHook
 from vllm_omni.diffusion.data import DiffusionCacheConfig, DiffusionOutput
@@ -299,4 +301,69 @@ def test_mixed_warmup_resets_real_teacache_between_dummy_and_image_shapes(monkey
 
     assert refresh_steps == [1, 1, 1, 1]
     assert hook.state_manager.get_state().previous_modulated_input.shape == (1, 9216, 4)
+    assert host._mixed_warmup_done
+
+
+def test_mixed_warmup_resets_cache_dit_between_image_shapes(monkeypatch, request):
+    """Cache-DiT 1.5.0 must not reuse a 1024px residual for a 1536px image."""
+    calls: list[str] = []
+    host = _forward_test_host(monkeypatch, calls)
+    nn.Module.__init__(host)
+    host._mixed_warmup = _parse_mixed_warmup_config({"resolutions": [[1024, 1024], [1536, 1536]]}, grid_factor=16)
+
+    class Block(nn.Module):
+        def forward(self, hidden_states, **_kwargs):
+            return hidden_states + 1
+
+    class Transformer(nn.Module):
+        _cache_dit_adapter_config = CacheDiTAdapterConfig(block_forward_patterns={"layers": ForwardPattern.Pattern_3})
+
+        def __init__(self):
+            super().__init__()
+            self.layers = nn.ModuleList([Block()])
+
+        def forward(self, hidden_states):
+            for layer in self.layers:
+                hidden_states = layer(hidden_states, update_cache=False, exist_gen=True, exist_und=False)
+            return hidden_states
+
+    host._dit_modules = ["transformer"]
+    host.transformer = Transformer()
+    backend = CacheDiTBackend(DiffusionCacheConfig(max_warmup_steps=1, residual_diff_threshold=1.0))
+    backend.enable(host)
+    request.addfinalizer(lambda: backend.disable(host))
+    # The runner publishes this same backend for nested warmup generations.
+    host._active_cache_backend = backend
+
+    refresh_steps: list[int] = []
+    original_refresh = backend.refresh
+
+    def refresh(pipeline, num_steps):
+        refresh_steps.append(num_steps)
+        original_refresh(pipeline, num_steps)
+
+    monkeypatch.setattr(backend, "refresh", refresh)
+
+    def denoise(tokens):
+        result = host.transformer(torch.zeros(1, tokens, 4))
+        assert result.shape == (1, tokens, 4)
+
+    def dummy(_params, _images):
+        denoise(1024)
+        denoise(1024)
+        return DiffusionOutput()
+
+    def image(params):
+        width, height = params.image_size
+        denoise(width * height // 256)
+        return DiffusionOutput()
+
+    monkeypatch.setattr(host, "_forward_it2i", dummy)
+    monkeypatch.setattr(host, "_forward_t2i", image)
+
+    backend.refresh(host, 2)
+    refresh_steps.clear()
+    host.forward(DiffusionRequestBatch([_forward_dummy()]))
+
+    assert refresh_steps == [1, 1]
     assert host._mixed_warmup_done

@@ -48,13 +48,14 @@ def _image_data_uri() -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def _request_payload(case: str, *, steps: int, cfg_scale: float, image_uri: str) -> dict:
+def _request_payload(case: str, *, model: str, steps: int, cfg_scale: float, image_uri: str) -> dict:
     kind, width, height = _parse_case(case)
     text = "A red cube on a white table" if kind.startswith("t2i") else "Describe the scene briefly."
     content = [{"type": "text", "text": text}]
     if kind == "i2t":
         content.append({"type": "image_url", "image_url": {"url": image_uri}})
     payload = {
+        "model": model,
         "messages": [{"role": "user", "content": content}],
         "modalities": ["text" if kind in {"t2t", "i2t"} else "image"],
     }
@@ -140,7 +141,9 @@ def main() -> None:
     with requests.Session() as session:
         for round_index in range(args.rounds):
             for case in cases:
-                payload = _request_payload(case, steps=args.steps, cfg_scale=args.cfg_scale, image_uri=image_uri)
+                payload = _request_payload(
+                    case, model=args.model, steps=args.steps, cfg_scale=args.cfg_scale, image_uri=image_uri
+                )
                 started = time.perf_counter()
                 response = session.post(
                     f"{args.base_url.rstrip('/')}/v1/chat/completions", json=payload, timeout=args.timeout
