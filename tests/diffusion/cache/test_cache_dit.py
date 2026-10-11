@@ -61,6 +61,7 @@ def test_custom_cache_dit_enablers_are_registered_explicitly():
         "Krea2Pipeline": cd_model_specific.enable_cache_for_krea2,
         "Magi2Pipeline": cd_model_specific.enable_cache_for_magi2,
         "MammothModa2DiTPipeline": cd_model_specific.enable_cache_for_mammothmoda2,
+        "SenseNovaU1Pipeline": cd_model_specific.enable_cache_for_sensenova_u1,
     }
 
     with patch.dict(cd_backend.CUSTOM_DIT_ENABLERS, {}, clear=True):
@@ -90,6 +91,23 @@ def test_wan22_vace_uses_wan22_custom_cache_dit_enabler():
 )
 def test_cosmos3_aliases_use_cosmos3_custom_cache_dit_enabler(pipeline_name: str):
     assert cd_backend.CUSTOM_DIT_ENABLERS[pipeline_name] is cd_model_specific.enable_cache_for_cosmos3
+
+
+@patch("vllm_omni.diffusion.cache.cachedit.model_specific.enable_cache_for_dit")
+@patch("vllm_omni.diffusion.cache.cachedit.model_specific._maybe_build_block_adapter")
+def test_sensenova_cache_dit_targets_inner_decoder(mock_build_adapter, mock_enable_cache):
+    pipeline = Mock()
+    adapter = mock_build_adapter.return_value
+    cached_adapter_cls = object()
+    pipeline.transformer._cache_dit_adapter_config.cached_adapter_cls = cached_adapter_cls
+    refresh = mock_enable_cache.return_value
+
+    result = cd_model_specific.enable_cache_for_sensenova_u1(pipeline, SAMPLE_CACHE_CONFIG)
+
+    mock_build_adapter.assert_called_once_with(pipeline)
+    mock_enable_cache.assert_called_once_with(pipeline, SAMPLE_CACHE_CONFIG, adapter, cached_adapter_cls)
+    assert result.refresh is refresh
+    assert result.targets == (adapter,)
 
 
 @patch("vllm_omni.diffusion.cache.cachedit.model_specific.enable_cache_for_dit")
