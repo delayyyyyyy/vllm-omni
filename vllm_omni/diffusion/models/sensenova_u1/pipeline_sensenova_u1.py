@@ -1389,7 +1389,12 @@ class SenseNovaU1Pipeline(
             )
             return self._parse_request(request)
 
-        def record(label: str, operation: Callable[[], object]) -> None:
+        def record(label: str, num_steps: int, operation: Callable[[], object]) -> None:
+            # The runner refreshed the cache for the outer dummy request. These
+            # direct calls are separate generations with potentially new shapes.
+            cache_backend = getattr(self, "_active_cache_backend", None)
+            if cache_backend is not None and cache_backend.is_enabled():
+                cache_backend.refresh(self, num_steps)
             started = time.perf_counter()
             operation()
             logger.info("SenseNova mixed warmup %s took %.2f s", label, time.perf_counter() - started)
@@ -1401,7 +1406,7 @@ class SenseNovaU1Pipeline(
                 512,
                 {"max_tokens": 1},
             )
-            record("text_to_text", lambda: self._forward_text(text_params, None))
+            record("text_to_text", text_params.num_steps, lambda: self._forward_text(text_params, None))
         if config.image_to_text:
             image_params = params(
                 {"prompt": "Describe the image.", "modalities": ["text"]},
@@ -1410,7 +1415,7 @@ class SenseNovaU1Pipeline(
                 {"max_tokens": 1},
             )
             image = Image.new("RGB", (512, 512), (127, 127, 127))
-            record("image_to_text", lambda: self._forward_text(image_params, [image]))
+            record("image_to_text", image_params.num_steps, lambda: self._forward_text(image_params, [image]))
         cfg_scale = (
             config.cfg_scale if config.cfg_scale is not None else (1.0 if self._has_fused_distilled_lora() else 4.0)
         )
@@ -1421,7 +1426,7 @@ class SenseNovaU1Pipeline(
                 height,
                 {"cfg_scale": cfg_scale, "think": False},
             )
-            record(f"text_to_image_{width}x{height}", lambda: self._forward_t2i(image_params))
+            record(f"text_to_image_{width}x{height}", image_params.num_steps, lambda: self._forward_t2i(image_params))
         self._mixed_warmup_done = True
 
     @staticmethod

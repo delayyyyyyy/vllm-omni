@@ -14,6 +14,11 @@ Each report contains eight serial requests: two repetitions of
 `t2i:1024x1024`, `t2t`, `i2t`, `t2i:1536x1536`.
 Image requests used seed 42; the distilled LoRA runs used snapshot
 `f33b8fe0216e6f10e5aed58ebbfdd05f02826732`.
+These historical runs used a benchmark that checked only for nonempty
+`choices`. Response bodies were not retained, so successful image decoding
+and requested image dimensions cannot be verified retroactively. The current
+benchmark validates both before recording a latency sample; rerun these
+configurations to obtain output-validated performance evidence.
 
 | Run | Original report | Start (Unix s) | First `/health` (Unix s) | Startup | GPU process memory at readiness |
 | --- | --- | ---: | ---: | ---: | ---: |

@@ -12,6 +12,7 @@ The OpenAI chat endpoint normalizes diffusion fields in
 
 import argparse
 import base64
+import binascii
 import io
 import json
 import re
@@ -66,6 +67,44 @@ def _request_payload(case: str, *, steps: int, cfg_scale: float, image_uri: str)
     return payload
 
 
+def _validate_response(case: str, body: object) -> None:
+    """Accept a timing only when the requested output modality was produced."""
+    choices = body.get("choices") if isinstance(body, dict) else None
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise RuntimeError(f"No choices returned for {case}")
+    message = choices[0].get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    kind, width, height = _parse_case(case)
+    if kind in {"t2t", "i2t"}:
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError(f"No text returned for {case}")
+        return
+
+    assert width is not None and height is not None
+    if not isinstance(content, list):
+        raise RuntimeError(f"No image returned for {case}")
+    image_parts = [part for part in content if isinstance(part, dict) and part.get("type") == "image_url"]
+    if not image_parts:
+        raise RuntimeError(f"No image returned for {case}")
+    for part in image_parts:
+        image_url = part.get("image_url")
+        url = image_url.get("url") if isinstance(image_url, dict) else None
+        if not isinstance(url, str):
+            raise RuntimeError(f"Invalid image URL returned for {case}")
+        header, separator, encoded = url.partition(",")
+        if not separator or not header.startswith("data:image/") or not header.endswith(";base64"):
+            raise RuntimeError(f"Invalid image URL returned for {case}")
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+            with Image.open(io.BytesIO(image_bytes)) as image:
+                image.load()
+                actual_size = image.size
+        except (binascii.Error, OSError, ValueError) as exc:
+            raise RuntimeError(f"Undecodable image returned for {case}") from exc
+        if actual_size != (width, height):
+            raise RuntimeError(f"Wrong image dimensions for {case}: expected {width}x{height}, got {actual_size}")
+
+
 def _git_sha() -> str | None:
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
@@ -109,8 +148,7 @@ def main() -> None:
                 elapsed = time.perf_counter() - started
                 response.raise_for_status()
                 body = response.json()
-                if not body.get("choices"):
-                    raise RuntimeError(f"No choices returned for {case}: {body}")
+                _validate_response(case, body)
                 rows.append({"round": round_index, "case": case, "latency_s": round(elapsed, 3)})
                 print(f"round={round_index} case={case} latency={elapsed:.3f}s", flush=True)
 

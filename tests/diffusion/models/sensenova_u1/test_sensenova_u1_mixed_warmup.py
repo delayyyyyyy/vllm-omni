@@ -5,9 +5,13 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from PIL import Image
+from torch import nn
 
-from vllm_omni.diffusion.data import DiffusionOutput
+from vllm_omni.diffusion.cache.teacache.backend import TeaCacheBackend
+from vllm_omni.diffusion.cache.teacache.hook import TeaCacheHook
+from vllm_omni.diffusion.data import DiffusionCacheConfig, DiffusionOutput
 from vllm_omni.diffusion.diffusion_engine import DiffusionEngine
 from vllm_omni.diffusion.lora.manager import LoRABackend
 from vllm_omni.diffusion.models.sensenova_u1.pipeline_sensenova_u1 import (
@@ -164,7 +168,7 @@ def _forward_dummy(request_id=DUMMY_DIFFUSION_REQUEST_ID):
 
 
 def test_forward_runs_mixed_profile_after_engine_dummy_once(monkeypatch):
-    calls = []
+    calls: list[str] = []
     host = _forward_test_host(monkeypatch, calls)
 
     host.forward(DiffusionRequestBatch([_forward_dummy(f"{DUMMY_DIFFUSION_REQUEST_ID}/kv-profile-0")]))
@@ -190,7 +194,7 @@ def test_forward_runs_mixed_profile_after_engine_dummy_once(monkeypatch):
 
 @pytest.mark.parametrize("failed_operation", ["text_to_text", "image_to_text", "text_to_image_1024x1024"])
 def test_forward_profile_error_fails_engine_startup(monkeypatch, failed_operation):
-    calls = []
+    calls: list[str] = []
     host = _forward_test_host(monkeypatch, calls, fail_on=failed_operation)
     engine = object.__new__(DiffusionEngine)
     engine._make_dummy_request = lambda **kwargs: _forward_dummy()
@@ -210,3 +214,89 @@ def test_forward_profile_error_fails_engine_startup(monkeypatch, failed_operatio
     assert calls[0:2] == ["ar_decode", "generic_dummy"]
     assert calls[-2:] == [failed_operation, "engine_closed"]
     assert not host._mixed_warmup_done
+
+
+def test_mixed_warmup_resets_real_teacache_between_dummy_and_image_shapes(monkeypatch):
+    """A 512px dummy must not share TeaCache's modulated input with larger images."""
+    calls: list[str] = []
+    host = _forward_test_host(monkeypatch, calls)
+    nn.Module.__init__(host)
+    host._mixed_warmup = _parse_mixed_warmup_config(
+        {"resolutions": [[1024, 1024], [1536, 1536]], "text_to_text": True, "image_to_text": True},
+        grid_factor=16,
+    )
+
+    class Layer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.input_layernorm_mot_gen = nn.Identity()
+
+        def forward(self, hidden, **kwargs):
+            assert len(kwargs["position_embeddings"]) == 3
+            assert kwargs["attention_mask"] == {"full_attention": None}
+            assert kwargs["use_cache"] is True
+            return hidden + 1
+
+    class Rotary(nn.Module):
+        def forward(self, _hidden, indexes):
+            return indexes, indexes
+
+    class Denoiser(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = nn.Module()
+            self.model.layers = nn.ModuleList([Layer()])
+            self.model.norm_mot_gen = nn.Identity()
+            self.model.rotary_emb = Rotary()
+            self.model.rotary_emb_hw = Rotary()
+
+        def forward(self, **_kwargs):
+            raise AssertionError("TeaCache hook must intercept denoising forwards")
+
+    host.transformer = nn.Identity()
+    host.denoising_transformer = Denoiser()
+    backend = TeaCacheBackend(DiffusionCacheConfig())
+    backend.enable(host)
+    assert host._active_cache_backend is backend
+    hook = host.denoising_transformer._hook_registry.get_hook(TeaCacheHook._HOOK_NAME)
+    assert isinstance(hook, TeaCacheHook)
+    refresh_steps = []
+    original_refresh = backend.refresh
+
+    def refresh(pipeline, num_steps):
+        refresh_steps.append(num_steps)
+        original_refresh(pipeline, num_steps)
+
+    monkeypatch.setattr(backend, "refresh", refresh)
+
+    def denoise(tokens):
+        host.denoising_transformer(
+            inputs_embeds=torch.zeros(1, tokens, 4),
+            image_gen_indicators=torch.ones(1, tokens, dtype=torch.bool),
+            indexes=torch.zeros(3, tokens, dtype=torch.long),
+            attention_mask={"full_attention": None},
+            use_cache=True,
+            compute_logits=False,
+        )
+
+    def dummy(_params, _images):
+        for _ in range(2):
+            denoise(1024)
+        return DiffusionOutput()
+
+    def image(params):
+        width, height = params.image_size
+        denoise(width * height // 256)
+        return DiffusionOutput()
+
+    monkeypatch.setattr(host, "_forward_it2i", dummy)
+    monkeypatch.setattr(host, "_forward_t2i", image)
+
+    # The runner refreshes once for the outer dummy request before forward().
+    backend.refresh(host, 2)
+    refresh_steps.clear()
+    host.forward(DiffusionRequestBatch([_forward_dummy()]))
+
+    assert refresh_steps == [1, 1, 1, 1]
+    assert hook.state_manager.get_state().previous_modulated_input.shape == (1, 9216, 4)
+    assert host._mixed_warmup_done

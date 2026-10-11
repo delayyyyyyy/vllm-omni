@@ -155,6 +155,9 @@ are available for review. The alternating sequence was `t2i:1024x1024`,
 two denoising steps, and CFG 4.0, while text requests used `max_tokens=2`.
 These short requests isolate first-hit overhead rather than represent
 production image quality or throughput.
+The historical reports did not retain response bodies or validate image
+outputs, so their latency figures require a rerun with the updated benchmark
+before they can be treated as output-validated measurements.
 
 | Metric | Default warmup | Mixed warmup |
 | --- | ---: | ---: |
